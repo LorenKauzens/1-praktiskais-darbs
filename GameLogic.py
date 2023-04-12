@@ -1,0 +1,154 @@
+import pygame
+from pygame.locals import *
+from Colour import Colour
+from Piece import Piece
+from Board import Board
+from Display import Display
+import configparser
+from Player import Player
+from Pawn import Pawn
+from Computer import Computer
+from Move import Move
+import math
+
+config = configparser.ConfigParser()
+config.read('config.ini')
+fps = int(config['Window']['FPS'])
+
+
+def main(human_player, ai_player):
+    pygame.init()
+    fps_clock = pygame.time.Clock()
+    pygame.display.set_caption('Checkers')
+
+    main_board = Board()
+    main_display = Display()
+
+    spoty = 0
+    spot_x = 0
+    mouse_x = 0
+    mouse_y = 0
+    mouse_clicked = False
+    depth_choice = 8
+    board = main_board.get_newboard()
+
+    computer = Computer(ai_player, human_player, Colour.RED.value)
+    move = Move()
+
+    while True:  # Main game loop
+        current_player = Player.select_player_with_turn(human_player, ai_player)
+        main_display.update_board(board)
+
+        if human_player.turn is True:  # human player turn
+            is_attacked = human_player.is_piece_attacked(board)  # checks if piece is attacked
+            main_display.check_for_quit()
+
+            for event in pygame.event.get():  # catch mouse clicks and mouse position
+                if event.type == MOUSEMOTION:
+                    mouse_y, mouse_x = event.pos
+                if event.type == MOUSEBUTTONUP:
+                    spoty, spot_x = main_display.get_spot_clicked(board, event.pos[0], event.pos[1])
+                    mouse_clicked = True
+            main_display.highlight_while_hovering(board, main_display, mouse_clicked, mouse_y, mouse_x)
+            piece = board[spoty][spot_x]
+
+            if isinstance(piece, Piece) and piece.colour == human_player.colour and mouse_clicked is True:
+                available_moves, attack = piece.get_all_available_moves(board)
+                has_attacked = False
+
+                # While loop for handling attack moves. If there's no attack available, this loop is skipped.
+                while any(True in sublist for sublist in available_moves) and attack is True:
+                    main_display.highlight_available_moves(available_moves)  # displays available attacks
+                    event = pygame.event.wait()
+                    main_display.check_for_quit()
+
+                    if event.type == MOUSEBUTTONUP:
+                        field_to_move_y, field_to_move_x = main_display.get_spot_clicked(board, event.pos[0], event.pos[1])
+
+                        if available_moves[field_to_move_y][field_to_move_x] is True:
+                            main_display.attack_piece_animation(board, field_to_move_y, field_to_move_x,
+                                                                piece.colour, spoty, spot_x)
+                            piece.attack_piece(board, field_to_move_y, field_to_move_x)
+
+                            spoty, spot_x = field_to_move_y, field_to_move_x
+
+                            if isinstance(piece, Pawn):
+                                piece.check_for_promotion(board)
+
+                            available_moves, attack = piece.get_all_available_moves(board)
+                            has_attacked = True
+
+                        elif has_attacked is False:
+                            break  # return to piece selection
+
+                # while loop for handling non-attack moves
+                while any(True in sublist for sublist in available_moves) and not has_attacked and not is_attacked:
+                    main_display.highlight_available_moves(available_moves)
+                    event = pygame.event.wait()
+                    main_display.check_for_quit()
+
+                    if event.type == MOUSEBUTTONUP:  # catch mouse clicks
+                        field_to_move_y, field_to_move_x = main_display.get_spot_clicked(board, event.pos[0], event.pos[1])
+
+                        if available_moves[field_to_move_y][field_to_move_x] is True:
+                            main_display.move_piece_animation(board, field_to_move_y, field_to_move_x,
+                                                              piece.colour, spoty, spot_x)
+                            piece.make_move(board, field_to_move_y, field_to_move_x)
+                            spoty, spot_x = field_to_move_y, field_to_move_x
+
+                            if isinstance(piece, Pawn):
+                                piece.check_for_promotion(board)
+
+                            # end his turn
+                            human_player.switch_turns(human_player, ai_player)
+                            mouse_y, mouse_x = event.pos
+                            available_moves = [[]]
+                        else:
+                            break  # return to piece selection
+
+                if has_attacked:  # end his turn
+                    human_player.switch_turns(human_player, ai_player)
+                    mouse_y, mouse_x = event.pos
+
+        # Computer turn
+        else:
+            value, best_move = computer.alpha_beta(depth_choice, True, -math.inf, math.inf, board)
+            if best_move[4] is not None:
+                move.attack(board, best_move[0], best_move[1], best_move[2], best_move[3], best_move[4])
+                main_display.draw_computer_highlight(best_move[0], best_move[1])
+
+                piece = board[best_move[0]][best_move[1]]
+                if isinstance(piece, Pawn):
+                    piece.check_for_promotion(board)
+
+                can_attack_again = piece.can_piece_attack(board)
+                while can_attack_again is True:  # can move after multi-attack, check this function
+                    value, best_move = computer.alpha_beta(depth_choice, True, math.inf, -math.inf, board)
+                    move.attack(board, best_move[0], best_move[1], best_move[2], best_move[3], best_move[4])
+                    main_display.draw_computer_highlight(best_move[0], best_move[1])
+
+                    piece = board[best_move[0]][best_move[1]]
+                    if isinstance(piece, Pawn):
+                        piece.check_for_promotion(board)
+
+                    can_attack_again = piece.can_piece_attack(board)
+
+            else:  # non-attack tuple doesn't have any fifth item
+                move.move(board, best_move[0], best_move[1], best_move[2], best_move[3])
+                main_display.draw_computer_highlight(best_move[0], best_move[1])
+                piece = board[best_move[0]][best_move[1]]
+
+                if isinstance(piece, Pawn):
+                    piece.check_for_promotion(board)
+
+            ai_player.switch_turns(human_player, ai_player)
+            pygame.display.update()
+            pygame.time.wait(300)
+
+        # Redraw screen and wait a clock tick.
+        current_player.check_for_victory(board, main_display)
+        mouse_clicked = False
+        pygame.display.update()
+        fps_clock.tick()
+
+
